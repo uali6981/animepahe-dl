@@ -315,7 +315,7 @@ download_episodes() {
         elif [[ "$only" == *"-"* ]]; then
             start=$(awk -F '-' '{print $1}' <<< "$only")
             last=$(awk -F '-' '{print $2}' <<< "$only")
-            print_info "Slastlected Episodes To Download From $start To $last"
+            print_info "Selected Episodes To Download From $start To $last"
         
         # if choose to download only one episode
         else
