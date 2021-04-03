@@ -113,11 +113,6 @@ command_not_found() {
     print_error "$1 command not found!"
 }
 
-dowload_picture_of_selected_anime() {
-    local _PIC_URL
-    _PIC_URL="$("$_JQ" -r '.total' "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE" | sort -nu)"
-
-}
 download_anime_list() {
     "$_CURL" --compressed -sS "$_ANIME_URL" \
     | grep "/anime/" \
