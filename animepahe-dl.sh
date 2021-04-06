@@ -52,6 +52,8 @@ set_args() {
     expr "$*" : ".*--help" > /dev/null && usage
     _PARALLEL_JOBS=100
     _ANIME_RESOLUTION=1080
+    _ANIME_EPISODE="*"
+    _TO_DOWNLOAD_PICTURE=true
     while getopts ":hldja:s:e:r:t:" opt; do
         case $opt in
             a)
@@ -162,6 +164,7 @@ get_episode_list() {
     # $1: anime id
     # $2: page number
     "$_CURL" --compressed -sS "${_API_URL}?m=release&id=${1}&sort=episode_asc&page=${2}"
+    # print_info "${_API_URL}?m=release&id=${1}&sort=episode_asc&page=${2}"
 }
 
 download_source() {
@@ -204,17 +207,18 @@ get_episode_link() {
     s=$("$_JQ" -r '.data[] | select((.episode | tonumber) == ($num | tonumber)) | .session' --arg num "$1" < "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE")
     [[ "$i" == "" ]] && print_error "Episode not found!"
     d="$("$_CURL" --compressed -sS "${_API_URL}?m=embed&id=${i}&session=${s}&p=kwik")"
+    # print_info "${_API_URL}?m=embed&id=${i}&session=${s}&p=kwik"
 
     if [[ -n "${_ANIME_RESOLUTION:-}" ]]; then
         print_info "Select resolution: $_ANIME_RESOLUTION"
         r="$("$_JQ" -r '.data[][$resolution] | select(. != null) | .kwik' \
-            --arg resolution "$_ANIME_RESOLUTION" <<< "$d" | head -1)"
+            --arg resolution "$_ANIME_RESOLUTION" <<< "$d" | tail -1)"
     fi
 
     if [[ -z "$r" ]]; then
         [[ -n "${_ANIME_RESOLUTION:-}" ]] &&
             print_warn "Selected resolution not available, fallback to default"
-        "$_JQ" -r '.data[][].kwik' <<< "$d" | tail -1
+        f="$_JQ" -r '.data[][].kwik' <<< "$d" | tail -
     else
         echo "$r"
     fi
@@ -227,57 +231,17 @@ get_playlist_link() {
         | grep '<script>' \
         | grep 'eval(function' \
         | sed -E 's/<script>//')
-
     l=$("$_NODE" -e "$s" 2>&1 \
         | grep 'source=' \
         | sed -E "s/.m3u8';.*/.m3u8/" \
         | sed -E "s/.*const source='//")
-
     echo "$l"
 }
 
 download_episodes() {
     # $1: episode number string
-    local origel el uniqel only total episodes first last start end
+    local origel el uniqel total start end
 
-    only="$1"
-
-    origel=()
-    if [[ "$1" == *","* ]]; then
-        IFS="," read -ra ADDR <<< "$1"
-        for n in "${ADDR[@]}"; do
-            origel+=("$n")
-        done
-    else
-        origel+=("$1")
-    fi
-
-    el=()
-    for i in "${origel[@]}"; do
-        if [[ "$i" == *"*"* ]]; then
-            local eps fst lst
-            eps="$("$_JQ" -r '.data[].episode' "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE" | sort -nu)"
-            fst="$(head -1 <<< "$eps")"
-            lst="$(tail -1 <<< "$eps")"
-            i="${fst}-${lst}"
-        fi
-
-        if [[ "$i" == *"-"* ]]; then
-            s=$(awk -F '-' '{print $1}' <<< "$i")
-            e=$(awk -F '-' '{print $2}' <<< "$i")
-            for n in $(seq "$s" "$e"); do
-                el+=("$n")
-            done
-        else
-            el+=("$i")
-        fi
-    done
-
-    IFS=" " read -ra uniqel <<< "$(printf '%s\n' "${el[@]}" | sort -n -u | tr '\n' ' ')"
-
-    [[ ${#uniqel[@]} == 0 ]] && print_error "Wrong episode number!"
-
-    for e in "${uniqel[@]}"; do
         # for showning anime name in information
         print_info "Selected Anime: $_ANIME_NAME"
 
@@ -296,32 +260,101 @@ download_episodes() {
             print_info "Total Episodes: $total"
         fi
 
-        # for showning selected anime episodes in information
-        # if choose to download all episodes
-        if [[ "$only" == *"*"* ]]; then
-            episodes="$("$_JQ" -r '.data[].episode' "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE" | sort -nu)"
-            start="$(head -1 <<< "$eps")"
-            end="$(tail -1 <<< "$eps")"
+    origel=()
+    if [[ "$1" == *","* ]]; then
+        IFS="," read -ra ADDR <<< "$1"
+        for n in "${ADDR[@]}"; do
+            origel+=("$n")
+        done
+    else
+        origel+=("$1")
+    fi
 
+    el=()
+    for i in "${origel[@]}"; do
+        if [[ "$i" == *"*"* ]]; then
+            local eps fst lst
+            eps="$("$_JQ" -r '.data[].episode' "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE" | sort -nu)"
+            fst="$(head -1 <<< "$eps")"
+            lst="$(tail -1 <<< "$eps")"
+
+            # for showning selected anime episodes in information
             # if selected anime have only one episode
-            if [[ "$start" == "$end" ]]; then
-                print_info "Selected Episode To Download Is $end"
+            if [[ "$fst" == "$lst" ]]; then
+                print_info "Selected Episode To Download Is $fst"
             
             # if selected anime have more than one episodes
             else
-                print_info "Selected Episodes To Download From $start To $end"
+                print_info "Selected Episodes To Download From $fst To $lst"
             fi
-        # if choose to download range of episodes
-        elif [[ "$only" == *"-"* ]]; then
-            start=$(awk -F '-' '{print $1}' <<< "$only")
-            last=$(awk -F '-' '{print $2}' <<< "$only")
-            print_info "Selected Episodes To Download From $start To $last"
-        
-        # if choose to download only one episode
-        else
-            print_info "Selected Episode To Download Is $only"
+            i="${fst}-${lst}"
         fi
 
+        if [[ "$i" == *"-"* ]]; then
+            s=$(awk -F '-' '{print $1}' <<< "$i")
+            e=$(awk -F '-' '{print $2}' <<< "$i")
+
+            # for showning selected anime episodes in information
+            print_info "Selected Episodes To Download From $s To $e"
+            for n in $(seq "$s" "$e"); do
+                el+=("$n")
+            done
+        else
+            # for showning selected anime episodes in information
+            print_info "Selected Episode To Download Is $1"
+            el+=("$i")
+        fi
+    done
+
+    IFS=" " read -ra uniqel <<< "$(printf '%s\n' "${el[@]}" | sort -n -u | tr '\n' ' ')"
+
+    [[ ${#uniqel[@]} == 0 ]] && print_error "Wrong episode number!"
+
+    for e in "${uniqel[@]}"; do
+        # # for showning anime name in information
+        # print_info "Selected Anime: $_ANIME_NAME"
+
+        # # for showning anime episodes in information
+        # total="$("$_JQ" -r '.total' "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE" | sort -nu)"
+        
+        # # if anime api did not have total episode variable then
+        # if [[ "$total" == "null" ]]; then
+        #     start="$(head -1 <<< "$eps")"
+        #     start="$(($start-1))"
+        #     end="$(tail -1 <<< "$eps")"
+        #     total="$(($end-$start))"
+        #     print_info "Total Episodes: $total"
+        # else
+        #     # if anime api have total episode variable then
+        #     print_info "Total Episodes: $total"
+        # fi
+
+        # # for showning selected anime episodes in information
+        # # if choose to download all episodes
+        # if [[ "$only" == *"*"* ]]; then
+        #     episodes="$("$_JQ" -r '.data[].episode' "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE" | sort -nu)"
+        #     start="$(head -1 <<< "$eps")"
+        #     end="$(tail -1 <<< "$eps")"
+
+        #     # if selected anime have only one episode
+        #     if [[ "$start" == "$end" ]]; then
+        #         print_info "Selected Episode To Download Is $end"
+            
+        #     # if selected anime have more than one episodes
+        #     else
+        #         print_info "Selected Episodes To Download From $start To $end"
+        #     fi
+        # # if choose to download range of episodes
+        # elif [[ "$only" == *"-"* ]]; then
+        #     start=$(awk -F '-' '{print $1}' <<< "$only")
+        #     last=$(awk -F '-' '{print $2}' <<< "$only")
+        #     print_info "Selected Episodes To Download From $start To $last"
+        
+        # # if choose to download only one episode
+        # else
+        #     print_info "Selected Episode To Download Is $only"
+        # fi
+        print_info "--------------------------"
         download_episode "$e"
     done
 }
@@ -341,12 +374,12 @@ download_file() {
     # $1: URL link
     # $2: output file
     local s
-    s=$("$_CURL" -sS -H "Referer: $_REFERER_URL" -C - "$1" -L -g -o "$2" \
+    s=$("$_CURL" -s -H "Referer: $_REFERER_URL" -C - "$1" -L -g -o "$2" \
         --connect-timeout 5 \
         --compressed \
         || echo "$?")
     if [[ "$s" -ne 0 ]]; then
-        print_warn "Download was aborted. Retry..."
+        # print_warn "Download was aborted. Retry..."
         download_file "$1" "$2"
     fi
 }
@@ -400,6 +433,7 @@ download_episode() {
     v="/home/uali69810/Downloads/Videos/${_ANIME_NAME}/${_ANIME_NAME} Ep ${num}.mp4"
 
     l=$(get_episode_link "$num")
+    # print_info "$l"
     [[ "$l" != *"/"* ]] && print_error "Wrong download link or episode not found!"
 
     pl=$(get_playlist_link "$l")
