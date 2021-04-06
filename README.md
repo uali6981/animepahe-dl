@@ -41,6 +41,7 @@ Options:
   -d                      enable debug mode
   -h | --help             display this help message
   -j                      to download selected anime picture
+  -u                      to download dub version of anime if available
 ```
 
 ### Example
@@ -136,6 +137,12 @@ $ ./animepahe-dl.sh -a jujutsu -e 5 -r 360
 
 ```bash
 $ ./animepahe-dl.sh -a jujutsu -e 1 -t 100
+```
+
+- To download anime dub if available:
+
+```bash
+$ ./animepahe-dl.sh -a jujutsu -e 1 -u
 ```
 
 - Enable picture downloading of selected anime:
