@@ -20,6 +20,7 @@
 #/   -d                      enable debug mode
 #/   -h | --help             display this help message
 #/   -j                      to download selected anime picture
+#/   -u                      to download dub version of anime if available
 
 set -e
 set -u
