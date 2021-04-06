@@ -52,9 +52,9 @@ set_args() {
     expr "$*" : ".*--help" > /dev/null && usage
     _PARALLEL_JOBS=100
     _ANIME_RESOLUTION=1080
-    _ANIME_EPISODE="*"
+    _ANIME_EPISODE="'*'"
     _TO_DOWNLOAD_PICTURE=true
-    while getopts ":hldja:s:e:r:t:" opt; do
+    while getopts ":hlduja:s:e:r:t:" opt; do
         case $opt in
             a)
                 _INPUT_ANIME_NAME="$OPTARG"
@@ -83,6 +83,9 @@ set_args() {
                 ;;
             j)
                 _TO_DOWNLOAD_PICTURE=true
+                ;;
+            u)
+                _ANIME_DUB=true
                 ;;
             h)
                 usage
@@ -211,14 +214,20 @@ get_episode_link() {
 
     if [[ -n "${_ANIME_RESOLUTION:-}" ]]; then
         print_info "Select resolution: $_ANIME_RESOLUTION"
-        r="$("$_JQ" -r '.data[][$resolution] | select(. != null) | .kwik' \
-            --arg resolution "$_ANIME_RESOLUTION" <<< "$d" | tail -1)"
+        if [[ -n "${_ANIME_DUB:-}" ]]; then
+            r="$("$_JQ" -r '.data[][$resolution] | select(. != null) | .kwik' \
+                --arg resolution "$_ANIME_RESOLUTION" <<< "$d" | head -1)"
+        else
+            r="$("$_JQ" -r '.data[][$resolution] | select(. != null) | .kwik' \
+                --arg resolution "$_ANIME_RESOLUTION" <<< "$d" | tail -1)"
+        fi
+        # print_info "$r"
     fi
 
     if [[ -z "$r" ]]; then
         [[ -n "${_ANIME_RESOLUTION:-}" ]] &&
             print_warn "Selected resolution not available, fallback to default"
-        f="$_JQ" -r '.data[][].kwik' <<< "$d" | tail -
+            "$_JQ" -r '.data[][].kwik' <<< "$d" | tail -1
     else
         echo "$r"
     fi
@@ -260,6 +269,17 @@ download_episodes() {
             print_info "Total Episodes: $total"
         fi
 
+        # if we put this code in below function then "*" after this info that function
+        # change the command "fst - lst" because of "-" next if statement do their work
+        # so show the info on eps twice if select to download all eps 
+        if [[ "$1" == *"-"* ]]; then
+            s=$(awk -F '-' '{print $1}' <<< "$i")
+            e=$(awk -F '-' '{print $2}' <<< "$i")
+
+            # for showning selected anime episodes in information
+            print_info "Selected Episodes To Download From $s To $e"
+        fi
+
     origel=()
     if [[ "$1" == *","* ]]; then
         IFS="," read -ra ADDR <<< "$1"
@@ -293,15 +313,12 @@ download_episodes() {
         if [[ "$i" == *"-"* ]]; then
             s=$(awk -F '-' '{print $1}' <<< "$i")
             e=$(awk -F '-' '{print $2}' <<< "$i")
-
-            # for showning selected anime episodes in information
-            print_info "Selected Episodes To Download From $s To $e"
             for n in $(seq "$s" "$e"); do
                 el+=("$n")
             done
         else
             # for showning selected anime episodes in information
-            print_info "Selected Episode To Download Is $1"
+            print_info "Selected Episode To Download Is $i"
             el+=("$i")
         fi
     done
