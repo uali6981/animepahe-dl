@@ -448,7 +448,7 @@ download_episode() {
     # $1: episode number
     local num="$1" l pl erropt='' v total
     # v="/external/My Files/Anime/${_ANIME_NAME}/${_ANIME_NAME} Ep ${num}.mp4"
-    v="%USERPROFILE%/Downloads/Video/${_ANIME_NAME}/${_ANIME_NAME} Ep ${num}.mp4"
+    v="$USERPROFILE/Downloads/Video/${_ANIME_NAME}/${_ANIME_NAME} Ep ${num}.mp4"
 
     l=$(get_episode_link "$num")
     # print_info "$l"
@@ -465,7 +465,7 @@ download_episode() {
             fname="file.list"
             cpath="$(pwd)"
             # opath="/external/My Files/Anime/$_ANIME_NAME/.${_ANIME_NAME} Ep ${num}"
-            opath="%USERPROFILE%/Downloads/Video/${_ANIME_NAME}/.${_ANIME_NAME} Ep ${num}"
+            opath="$USERPROFILE/Downloads/Video/${_ANIME_NAME}/.${_ANIME_NAME} Ep ${num}"
 
             plist="${opath}/playlist.m3u8"
             rm -rf "$opath"
