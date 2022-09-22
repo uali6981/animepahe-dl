@@ -7,7 +7,7 @@
 #/
 #/ Options:
 #/   -a <name>               anime name
-#/   -s <slug>               anime slug, can be found in $_ANIME_LIST_FILE
+#/   -s <slug>               anime slug/uuid, can be found in $_ANIME_LIST_FILE
 #/                           ignored when "-a" is enabled
 #/   -e <num1,num3-num4...>  optional, episode number to download
 #/                           multiple episode numbers seperated by ","
@@ -15,6 +15,7 @@
 #/                           all episodes using "*"
 #/   -r <resolution>         optional, specify resolution: "1080", "720"...
 #/                           by default, the highest resolution is selected
+#/   -o <language>           optional, specify audio language: "eng", "jpn"...
 #/   -t <num>                optional, specify a positive integer as num of threads
 #/   -l                      optional, show m3u8 playlist link without downloading videos
 #/   -d                      enable debug mode
@@ -32,7 +33,11 @@ set_var() {
     _CURL="$(command -v curl)" || command_not_found "curl"
     _JQ="$(command -v jq)" || command_not_found "jq"
     _FZF="$(command -v fzf)" || command_not_found "fzf"
-    _NODE="$(command -v node)" || command_not_found "node"
+    if [[ -z ${ANIMEPAHE_DL_NODE:-} ]]; then
+        _NODE="$(command -v node)" || command_not_found "node"
+    else
+        _NODE="$ANIMEPAHE_DL_NODE"
+    fi
     _FFMPEG="$(command -v ffmpeg)" || command_not_found "ffmpeg"
     if [[ ${_PARALLEL_JOBS:-} -gt 1 ]]; then
        _OPENSSL="$(command -v openssl)" || command_not_found "openssl"
@@ -51,7 +56,7 @@ set_var() {
 set_args() {
     expr "$*" : ".*--help" > /dev/null && usage
     _PARALLEL_JOBS=1
-    while getopts ":hldua:s:e:r:t:" opt; do
+    while getopts ":hldua:s:e:r:t:o:" opt; do
         case $opt in
             a)
                 _INPUT_ANIME_NAME="$OPTARG"
@@ -73,6 +78,9 @@ set_args() {
                 if [[ ! "$_PARALLEL_JOBS" =~ ^[0-9]+$ || "$_PARALLEL_JOBS" -eq 0 ]]; then
                     print_error "-t <num>: Number must be a positive integer"
                 fi
+                ;;
+            o)
+                _ANIME_AUDIO="$OPTARG"
                 ;;
             d)
                 _DEBUG_MODE=true
@@ -112,49 +120,47 @@ command_not_found() {
     print_error "$1 command not found!"
 }
 
+get() {
+    # $1: url
+    "$_CURL" -sS -L "$1" --compressed
+}
+
 download_anime_list() {
-    "$_CURL" --compressed -sS "$_ANIME_URL" \
+    get "$_ANIME_URL" \
     | grep "/anime/" \
-    | sed -E 's/.*anime\//[/;s/" title="/] /;s/\">.*//' \
+    | sed -E 's/.*anime\//[/;s/" title="/] /;s/\">.*/   /' \
     > "$_ANIME_LIST_FILE"
 }
 
 search_anime_by_name() {
     # $1: anime name
     local d n
-    d="$("$_CURL" --compressed -sS "$_HOST/api?m=search&q=${1// /%20}")"
+    d="$(get "$_HOST/api?m=search&q=${1// /%20}")"
     n="$("$_JQ" -r '.total' <<< "$d")"
     if [[ "$n" -eq "0" ]]; then
         echo ""
     else
-        "$_JQ" -r '.data[] | "[\(.session)] \(.title)"' <<< "$d" | tee -a "$_ANIME_LIST_FILE"
+        "$_JQ" -r '.data[] | "[\(.session)] \(.title)   "' <<< "$d" \
+            | tee -a "$_ANIME_LIST_FILE" \
+            | remove_slug
     fi
-}
-
-get_anime_id() {
-    # $1: anime slug
-    "$_CURL" --compressed -sS -L "$_ANIME_URL/$1" \
-    | grep getJSON \
-    | sed -E 's/.*id=//' \
-    | awk -F '&' '{print $1}'
 }
 
 get_episode_list() {
     # $1: anime id
     # $2: page number
-    "$_CURL" --compressed -sS "${_API_URL}?m=release&id=${1}&sort=episode_asc&page=${2}"
+    get "${_API_URL}?m=release&id=${1}&sort=episode_asc&page=${2}"
 }
 
 download_source() {
-    local id d p n
+    local d p n
     mkdir -p "$_SCRIPT_PATH/$_ANIME_NAME"
-    id="$(get_anime_id "$_ANIME_SLUG")"
-    d="$(get_episode_list "$id" "1")"
+    d="$(get_episode_list "$_ANIME_SLUG" "1")"
     p="$("$_JQ" -r '.last_page' <<< "$d")"
 
     if [[ "$p" -gt "1" ]]; then
         for i in $(seq 2 "$p"); do
-            n="$(get_episode_list "$id" "$i")"
+            n="$(get_episode_list "$_ANIME_SLUG" "$i")"
             d="$(echo "$d $n" | "$_JQ" -s '.[0].data + .[1].data | {data: .}')"
         done
     fi
@@ -167,41 +173,65 @@ get_episode_link() {
     local i s d r=""
     i=$("$_JQ" -r '.data[] | select((.episode | tonumber) == ($num | tonumber)) | .anime_id' --arg num "$1" < "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE")
     s=$("$_JQ" -r '.data[] | select((.episode | tonumber) == ($num | tonumber)) | .session' --arg num "$1" < "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE")
-    [[ "$i" == "" ]] && print_error "Episode not found!"
-    d="$("$_CURL" --compressed -sS "${_API_URL}?m=embed&id=${i}&session=${s}&p=kwik")"
+    [[ "$i" == "" ]] && print_warn "Episode $1 not found!" && return
+    d="$(get "${_API_URL}?m=embed&id=${i}&session=${s}&p=kwik" | "$_JQ" -r '.data[]')"
 
-    if [[ -n "${_ANIME_RESOLUTION:-}" ]]; then
-        print_info "Select resolution: $_ANIME_RESOLUTION"
-        if [[ -n "${_ANIME_DUB:-}" ]]; then
-            r="$("$_JQ" -r '.data[][$resolution] | select(. != null) | .kwik' \
-                --arg resolution "$_ANIME_RESOLUTION" <<< "$d" | head -1)"
+    if [[ -n "${_ANIME_AUDIO:-}" ]]; then
+        print_info "Select audio language: $_ANIME_AUDIO"
+        r="$("$_JQ" -r '.[] |= select(.audio == "'"$_ANIME_AUDIO"'") | select(.[] != null)' <<< "$d")"
+        if [[ -n "${r:-}" ]]; then
+            d="$r"
         else
-            r="$("$_JQ" -r '.data[][$resolution] | select(. != null) | .kwik' \
-                --arg resolution "$_ANIME_RESOLUTION" <<< "$d" | tail -1)"
+            print_warn "Selected audio language is not available, fallback to default."
         fi
     fi
 
-    if [[ -z "$r" ]]; then
-        [[ -n "${_ANIME_RESOLUTION:-}" ]] &&
-            print_warn "Selected resolution not available, fallback to default"
-            "$_JQ" -r '.data[][].kwik' <<< "$d" | tail -1
-    else
-        echo "$r"
+    if [[ -n "${_ANIME_RESOLUTION:-}" ]]; then
+    #     print_info "Select video resolution: $_ANIME_RESOLUTION"
+    #     if [[ -n "${_ANIME_DUB:-}" ]]; then
+    #         r="$("$_JQ" -r '.data[][$resolution] | select(. != null) | .kwik' \
+    #             --arg resolution "$_ANIME_RESOLUTION" <<< "$d" | head -1)"
+    #     else
+    #         r="$("$_JQ" -r '.data[][$resolution] | select(. != null) | .kwik' \
+    #             --arg resolution "$_ANIME_RESOLUTION" <<< "$d" | tail -1)"
+    #     fi
+    # fi
+
+    # if [[ -z "$r" ]]; then
+    #     [[ -n "${_ANIME_RESOLUTION:-}" ]] &&
+    #         print_warn "Selected video resolution not available, fallback to default"
+    #         "$_JQ" -r '.data[][].kwik' <<< "$d" | tail -1
+    # else
+    #     echo "$r"
+    # fi
+        print_info "Select video resolution: $_ANIME_RESOLUTION"
+        r="$("$_JQ" -r 'to_entries | .[] |= select(.key == "'"$_ANIME_RESOLUTION"'") | from_entries | select(.[] != null)' <<< "$d")"
+        if [[ -n "${r:-}" ]]; then
+            d="$r"
+        else
+            print_warn "Selected video resolution not available, fallback to default"
+        fi
     fi
+
+    # "$_JQ" -r '.[].kwik' <<< "$d" |  tail -1
+    "$_JQ" -r '.[].kwik' <<< "$d" | case "$_ANIME_DUB:-" in "true") tail -1;; "false") head -1;; esac
+
 }
 
 get_playlist_link() {
     # $1: episode link
     local s l
-    s=$("$_CURL" --compressed -sS -H "Referer: $_REFERER_URL" "$1" \
-        | grep '<script>' \
-        | grep 'eval(function' \
-        | sed -E 's/<script>//')
+    s="$("$_CURL" --compressed -sS -H "Referer: $_REFERER_URL" "$1" \
+        | grep "<script>eval(" \
+        | awk -F 'script>' '{print $2}'\
+        | sed -E 's/document/process/g' \
+        | sed -E 's/querySelector/exit/g' \
+        | sed -E 's/eval\(/console.log\(/g')"
 
-    l=$("$_NODE" -e "$s" 2>&1 \
+    l="$("$_NODE" -e "$s" \
         | grep 'source=' \
         | sed -E "s/.m3u8';.*/.m3u8/" \
-        | sed -E "s/.*const source='//")
+        | sed -E "s/.*const source='//")"
 
     echo "$l"
 }
@@ -313,8 +343,7 @@ decrypt_segments() {
     export _OPENSSL k
     export -f decrypt_file
     xargs -I {} -P "$(get_thread_number "$1")" \
-        bash -c 'decrypt_file "{}" "$k"' < <(ls "${2}/"*.ts.encrypted \
-        | sed -E 's/ /\\ /g')
+        bash -c 'decrypt_file "{}" "$k"' < <(ls "${2}/"*.ts.encrypted)
 }
 
 download_episode() {
@@ -323,10 +352,10 @@ download_episode() {
     v="$_SCRIPT_PATH/${_ANIME_NAME}/${num}.mp4"
 
     l=$(get_episode_link "$num")
-    [[ "$l" != *"/"* ]] && print_error "Wrong download link or episode not found!"
+    [[ "$l" != *"/"* ]] && print_warn "Wrong download link or episode $1 not found!" && return
 
     pl=$(get_playlist_link "$l")
-    [[ -z "${pl:-}" ]] && print_error "Missing video list!"
+    [[ -z "${pl:-}" ]] && print_warn "Missing video list! Skip downloading!" && return
 
     if [[ -z ${_LIST_LINK_ONLY:-} ]]; then
         print_info "Downloading Episode $1..."
@@ -335,7 +364,7 @@ download_episode() {
             local opath plist cpath fname
             fname="file.list"
             cpath="$(pwd)"
-            opath="$_SCRIPT_PATH/$_ANIME_NAME/.${num}"
+            opath="$_SCRIPT_PATH/$_ANIME_NAME/${num}"
             plist="${opath}/playlist.m3u8"
             rm -rf "$opath"
             mkdir -p "$opath"
@@ -346,10 +375,10 @@ download_episode() {
             decrypt_segments "$plist" "$opath"
             generate_filelist "$plist" "${opath}/$fname"
 
-            cd "$opath" || print_error "Cannot change directory to $opath"
+            ! cd "$opath" && print_warn "Cannot change directory to $opath" && return
             "$_FFMPEG" -f concat -safe 0 -i "$fname" -c copy $erropt -y "$v"
-            cd "$cpath" || print_error "Cannot change directory to $cpath"
-            [[ -z "${_DEBUG_MODE:-}" ]] && rm -rf "$opath"
+            ! cd "$cpath" && print_warn "Cannot change directory to $cpath" && return
+            [[ -z "${_DEBUG_MODE:-}" ]] && rm -rf "$opath" || return 0
         else
             "$_FFMPEG" -headers "Referer: $_REFERER_URL" -i "$pl" -c copy $erropt -y "$v"
         fi
@@ -370,28 +399,36 @@ remove_brackets() {
     awk -F']' '{print $1}' | sed -E 's/^\[//'
 }
 
+remove_slug() {
+    awk -F'] ' '{print $2}'
+}
+
+get_slug_from_name() {
+    # $1: anime name
+    grep "] $1" "$_ANIME_LIST_FILE" | tail -1 | remove_brackets
+}
+
 main() {
     set_args "$@"
     set_var
 
     if [[ -n "${_INPUT_ANIME_NAME:-}" ]]; then
-        _ANIME_SLUG=$("$_FZF" -1 <<< "$(search_anime_by_name "$_INPUT_ANIME_NAME")" | remove_brackets)
+        _ANIME_NAME=$("$_FZF" -1 <<< "$(search_anime_by_name "$_INPUT_ANIME_NAME")")
+        _ANIME_SLUG="$(get_slug_from_name "$_ANIME_NAME")"
     else
         download_anime_list
         if [[ -z "${_ANIME_SLUG:-}" ]]; then
-            _ANIME_SLUG=$("$_FZF" < "$_ANIME_LIST_FILE" | remove_brackets)
+            _ANIME_NAME=$("$_FZF" -1 <<< "$(remove_slug < "$_ANIME_LIST_FILE")")
+            _ANIME_SLUG="$(get_slug_from_name "$_ANIME_NAME")"
         fi
     fi
 
     [[ "$_ANIME_SLUG" == "" ]] && print_error "Anime slug not found!"
-    _ANIME_NAME=$(sort -u "$_ANIME_LIST_FILE" \
-        | grep "$_ANIME_SLUG" \
-        | awk -F '] ' '{print $2}' \
-        | sed -E 's/\//_/g' \
-        | sed -E 's/\"/_/g' \
-        | sed -E 's/\?/_/g' \
-        | sed -E 's/\*/_/g' \
-        | sed -E 's/\:/_/g')
+    _ANIME_NAME="$(grep "$_ANIME_SLUG" "$_ANIME_LIST_FILE" \
+        | tail -1 \
+        | remove_slug \
+        | sed -E 's/[[:space:]]+$//' \
+        | sed -E 's/[^[:alnum:] ,\+\-\)\(]/_/g')"
 
     if [[ "$_ANIME_NAME" == "" ]]; then
         print_warn "Anime name not found! Try again."
