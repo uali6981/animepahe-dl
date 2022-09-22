@@ -57,7 +57,7 @@ set_var() {
 set_args() {
     expr "$*" : ".*--help" > /dev/null && usage
     _PARALLEL_JOBS=100
-    _ANIME_RESOLUTION=1080
+    _ANIME_RESOLUTION=720
     _ANIME_EPISODE="'*'"
     _TO_DOWNLOAD_PICTURE=true
     while getopts ":hldua:s:e:r:t:o:" opt; do
@@ -126,6 +126,26 @@ get() {
     "$_CURL" -sS -L "$1" --compressed
 }
 
+
+get_anime_pic_url() {
+    # $1: anime slug
+    get "$_ANIME_URL/$1" \
+    | grep -Po '(?<=href=")(https)://i.[^"]*(?=")' | head -1
+
+    # | grep -Po '(?<=https=")[^"]*(?=")'
+    # | grep -Eoi '<a [^>]+>' | 
+    #   grep -Eo 'href="[^\"]+"' | 
+    #   grep -Eo "(https)://i.animepahe.com/posters[a-z0-9?=_%:-].jpg*" | sort -u
+    # |  grep -Eo "(https)://i.animepahe.com/posters[a-z0-9?=_%:-].jpg*" | sort -u 
+}
+
+download_pic() {
+    # $1: picture url
+    # $2: output file name
+    rm -f "$2"
+    "$_CURL" -sS -C - "$1" -L -g -o "$2"  
+}
+
 download_anime_list() {
     get "$_ANIME_URL" \
     | grep "/anime/" \
@@ -160,6 +180,23 @@ download_source() {
     mkdir -p "$_SCRIPT_PATH/$_ANIME_NAME"
     d="$(get_episode_list "$_ANIME_SLUG" "1")"
     p="$("$_JQ" -r '.last_page' <<< "$d")"
+    
+    if [[ -n "${_TO_DOWNLOAD_PICTURE:-}" ]]; then
+        local cpath dpath pic
+        pic="$(get_anime_pic_url "$_ANIME_SLUG")"
+        print_info "Downloading Picture For Selected Anime: $_ANIME_NAME"
+
+        pname="${_ANIME_NAME}.jpg"
+        dpath="C:/Users/$USERNAME/Downloads/Video/${_ANIME_NAME}/"
+        # dpath="/home/uali69810/Downloads/Videos/${_ANIME_NAME}/"
+        # dpath="/home/uali69810/Downloads/Videos/${_ANIME_NAME}/"
+        cpath="$(pwd)"
+        mkdir -p "$dpath"
+
+        cd "$dpath"
+        download_pic "$pic" "$pname"
+        cd "$cpath"
+    fi
 
     if [[ "$p" -gt "1" ]]; then
         for i in $(seq 2 "$p"); do
@@ -442,7 +479,7 @@ download_episode() {
     local num="$1" l pl erropt='' v
     # v="$_SCRIPT_PATH/${_ANIME_NAME}/${num}.mp4"
     # v="/external/My Files/Anime/${_ANIME_NAME}/${_ANIME_NAME} Ep ${num}.mp4"
-    v="C:/Users/$USER/Downloads/Video/${_ANIME_NAME}/${_ANIME_NAME} Ep ${num}.mp4"
+    v="C:/Users/$USERNAME/Downloads/Video/${_ANIME_NAME}/${_ANIME_NAME} Ep ${num}.mp4"
 
     l=$(get_episode_link "$num")
     [[ "$l" != *"/"* ]] && print_warn "Wrong download link or episode $1 not found!" && return
@@ -459,7 +496,7 @@ download_episode() {
             cpath="$(pwd)"
             #  opath="$_SCRIPT_PATH/$_ANIME_NAME/${num}"
             # opath="/external/My Files/Anime/$_ANIME_NAME/.${_ANIME_NAME} Ep ${num}"
-            opath="C:/Users/$USER/Downloads/Video/${_ANIME_NAME}/.${_ANIME_NAME} Ep ${num}"
+            opath="C:/Users/$USERNAME/Downloads/Video/${_ANIME_NAME}/${_ANIME_NAME} Ep ${num}"
             
 
             plist="${opath}/playlist.m3u8"
