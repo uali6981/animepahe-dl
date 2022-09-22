@@ -10,7 +10,7 @@
 - [Disclaimer](#disclaimer)
 - [You may like...](#you-may-like)
   - [Don't like animepahe? Want an alternative?](#dont-like-animepahe-want-an-alternative)
-  - [What to know when the new episode of your favorite anime will be released?](#what-to-know-when-the-new-episode-of-your-favorite-anime-will-be-released)
+  - [Want to know when the new episode of your favorite anime will be released?](#want-to-know-when-the-new-episode-of-your-favorite-anime-will-be-released)
 
 ## Dependency
 
@@ -28,7 +28,7 @@ Usage:
 
 Options:
   -a <name>               anime name
-  -s <slug>               anime slug, can be found in $_ANIME_LIST_FILE
+  -s <slug>               anime slug/uuid, can be found in $_ANIME_LIST_FILE
                           ignored when "-a" is enabled
   -e <num1,num3-num4...>  optional, episode number to download
                           multiple episode numbers seperated by ","
@@ -36,12 +36,12 @@ Options:
                           all episodes using "*"
   -r <resolution>         optional, specify resolution: "1080", "720"...
                           by default, the highest resolution is selected
+  -o <language>           optional, specify audio language: "eng", "jpn"...
   -t <num>                optional, specify a positive integer as num of threads
   -l                      optional, show m3u8 playlist link without downloading videos
   -d                      enable debug mode
   -h | --help             display this help message
   -j                      to download selected anime picture
-  -u                      to download dub version of anime if available
 ```
 
 ### Example
@@ -61,7 +61,7 @@ $ ./animepahe-dl.sh -a 'attack on titan'
 <anime list in fzf>
 ```
 
-- By default, anime slug is stored in `./anime.list` file. Download "One Punch Man" season 2 episode 3:
+- By default, anime slug/uuid is stored in `./anime.list` file. Be aware that the value of anime slug/uuid often changes, not permanent. Download "One Punch Man" season 2 episode 3:
 
 ```bash
 $ ./animepahe-dl.sh -s 308f5756-6715-e404-998d-92f16b9d9858 -e 3
@@ -129,8 +129,16 @@ $ ./animepahe-dl.sh -s 308f5756-6715-e404-998d-92f16b9d9858 -e '*'
 
 ```bash
 $ ./animepahe-dl.sh -a jujutsu -e 5 -r 360
-[INFO] Select resolution: 360
+[INFO] Select video resolution: 360
 [INFO] Downloading Episode 5...
+```
+
+- Specify audio language:
+
+```bash
+$ ./animepahe-dl.sh -a 'samurai 7' -e 1 -o eng
+[INFO] Select audio language: eng
+[INFO] Downloading Episode 1...
 ```
 
 - Enable parallel jobs to download faster:
@@ -138,8 +146,9 @@ $ ./animepahe-dl.sh -a jujutsu -e 5 -r 360
 ```bash
 $ ./animepahe-dl.sh -a jujutsu -e 1 -t 100
 ```
+:warning: Be aware that the parallel download feature can be sometimes unstable, depending on the server side throttling. But usually, it should be stable with a number of threads below 50.
 
-- To download anime dub if available:
+- To download Dub if available:
 
 ```bash
 $ ./animepahe-dl.sh -a jujutsu -e 1 -u
@@ -174,7 +183,7 @@ The purpose of this script is to download anime episodes in order to watch them 
 
 Check out [twistmoe-dl](https://github.com/KevCui/twistmoe-dl)
 
-### What to know when the new episode of your favorite anime will be released?
+### Want to know when the new episode of your favorite anime will be released?
 
 Check out this script [tvdb-cli](https://github.com/KevCui/tvdb-cli)
 
