@@ -43,10 +43,10 @@ set_var() {
        _OPENSSL="$(command -v openssl)" || command_not_found "openssl"
     fi
 
-    _HOST="https://animepahe.com"
+    _HOST="https://animepahe.ru"
     _ANIME_URL="$_HOST/anime"
     _API_URL="$_HOST/api"
-    _REFERER_URL="https://kwik.cx/"
+    _REFERER_URL="$_HOST"
 
     _SCRIPT_PATH=$(dirname "$(realpath "$0")")
     _ANIME_LIST_FILE="$_SCRIPT_PATH/anime.list"
@@ -122,13 +122,19 @@ command_not_found() {
 
 get() {
     # $1: url
-    "$_CURL" -sS -L "$1" --compressed
+    "$_CURL" -sS -L "$1" -H "cookie: $_COOKIE" --compressed
+}
+
+set_cookie() {
+    local u
+    u="$(LC_ALL=C tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 16)"
+    _COOKIE="__ddg2_=$u"
 }
 
 download_anime_list() {
     get "$_ANIME_URL" \
     | grep "/anime/" \
-    | sed -E 's/.*anime\//[/;s/" title="/] /;s/\">.*/   /' \
+    | sed -E 's/.*anime\//[/;s/" title="/] /;s/\">.*/   /;s/" title/]/' \
     > "$_ANIME_LIST_FILE"
 }
 
@@ -173,7 +179,7 @@ get_episode_link() {
     local s o l r=""
     s=$("$_JQ" -r '.data[] | select((.episode | tonumber) == ($num | tonumber)) | .session' --arg num "$1" < "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE")
     [[ "$s" == "" ]] && print_warn "Episode $1 not found!" && return
-    o="$("$_CURL" --compressed -sSL "${_HOST}/play/${_ANIME_SLUG}/${s}")"
+    o="$("$_CURL" --compressed -sSL -H "cookie: $_COOKIE" "${_HOST}/play/${_ANIME_SLUG}/${s}")"
     l="$(grep \<button <<< "$o" \
         | grep data-src \
         | sed -E 's/data-src="/\n/g' \
@@ -213,16 +219,16 @@ get_episode_link() {
     fi
 
     if [[ -z "${r:-}" ]]; then
-        grep url <<< "$o" | grep kwik | awk -F '"' '{print $2}'
+        grep kwik <<< "$l" | tail -1 | grep kwik | awk -F '"' '{print $1}'
     else
-        awk -F '" ' '{print $1}' <<< "$r" | head -1
+        awk -F '" ' '{print $1}' <<< "$r" | tail -1
     fi
 }
 
 get_playlist_link() {
     # $1: episode link
     local s l
-    s="$("$_CURL" --compressed -sS -H "Referer: $_REFERER_URL" "$1" \
+    s="$("$_CURL" --compressed -sS -H "Referer: $_REFERER_URL" -H "cookie: $_COOKIE" "$1" \
         | grep "<script>eval(" \
         | awk -F 'script>' '{print $2}'\
         | sed -E 's/document/process/g' \
@@ -296,7 +302,7 @@ download_file() {
     # $1: URL link
     # $2: output file
     local s
-    s=$("$_CURL" -sS -H "Referer: $_REFERER_URL" -C - "$1" -L -g -o "$2" \
+    s=$("$_CURL" -sS -H "Referer: $_REFERER_URL" -H "cookie: $_COOKIE" -C - "$1" -L -g -o "$2" \
         --connect-timeout 5 \
         --compressed \
         || echo "$?")
@@ -412,6 +418,7 @@ get_slug_from_name() {
 main() {
     set_args "$@"
     set_var
+    set_cookie
 
     if [[ -n "${_INPUT_ANIME_NAME:-}" ]]; then
         _ANIME_NAME=$("$_FZF" -1 <<< "$(search_anime_by_name "$_INPUT_ANIME_NAME")")
