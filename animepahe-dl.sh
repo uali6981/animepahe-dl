@@ -44,10 +44,11 @@ set_var() {
        _OPENSSL="$(command -v openssl)" || command_not_found "openssl"
     fi
 
-    _HOST="https://animepahe.com"
+    _HOST="https://animepahe.ru"
     _ANIME_URL="$_HOST/anime"
     _API_URL="$_HOST/api"
-    _REFERER_URL="https://kwik.cx/"
+    _REFERER_URL="$_HOST"
+    # _REFERER_URL="https://kwik.cx/"
 
     _SCRIPT_PATH=$(dirname "$(realpath "$0")")
     _ANIME_LIST_FILE="$_SCRIPT_PATH/anime.list"
@@ -57,7 +58,7 @@ set_var() {
 set_args() {
     expr "$*" : ".*--help" > /dev/null && usage
     _PARALLEL_JOBS=100
-    _ANIME_RESOLUTION=720
+    _ANIME_RESOLUTION=1080
     _ANIME_EPISODE="'*'"
     _TO_DOWNLOAD_PICTURE=true
     while getopts ":hldua:s:e:r:t:o:" opt; do
@@ -123,7 +124,8 @@ command_not_found() {
 
 get() {
     # $1: url
-    "$_CURL" -sS -L "$1" --compressed
+    # "$_CURL" -sS -L "$1" --compressed
+    "$_CURL" -sS -L "$1" -H "cookie: $_COOKIE" --compressed
 }
 
 
@@ -139,6 +141,12 @@ get_anime_pic_url() {
     # |  grep -Eo "(https)://i.animepahe.com/posters[a-z0-9?=_%:-].jpg*" | sort -u 
 }
 
+set_cookie() {
+    local u
+    u="$(LC_ALL=C tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 16)"
+    _COOKIE="__ddg2_=$u"
+}
+
 download_pic() {
     # $1: picture url
     # $2: output file name
@@ -147,10 +155,12 @@ download_pic() {
 }
 
 download_anime_list() {
+    
     get "$_ANIME_URL" \
     | grep "/anime/" \
-    | sed -E 's/.*anime\//[/;s/" title="/] /;s/\">.*/   /' \
+    | sed -E 's/.*anime\//[/;s/" title="/] /;s/\">.*/   /;s/" title/]/' \
     > "$_ANIME_LIST_FILE"
+    # | sed -E 's/.*anime\//[/;s/" title="/] /;s/\">.*/   /' \
 }
 
 search_anime_by_name() {
@@ -210,18 +220,19 @@ download_source() {
 
 get_episode_link() {
     # $1: episode number
-    local i s d r=""
-    i=$("$_JQ" -r '.data[] | select((.episode | tonumber) == ($num | tonumber)) | .anime_id' --arg num "$1" < "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE")
+    local s o l r=""
     s=$("$_JQ" -r '.data[] | select((.episode | tonumber) == ($num | tonumber)) | .session' --arg num "$1" < "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE")
-    [[ "$i" == "" ]] && print_warn "Episode $1 not found!" && return
-    d="$(get "${_API_URL}?m=embed&id=${i}&session=${s}&p=kwik" | "$_JQ" -r '.data[]')"
+    [[ "$s" == "" ]] && print_warn "Episode $1 not found!" && return
+    o="$("$_CURL" --compressed -sSL -H "cookie: $_COOKIE" "${_HOST}/play/${_ANIME_SLUG}/${s}")"
+    l="$(grep \<button <<< "$o" \
+        | grep data-src \
+        | sed -E 's/data-src="/\n/g' \
+        | grep 'data-av1="0"')"
 
     if [[ -n "${_ANIME_AUDIO:-}" ]]; then
         print_info "Select audio language: $_ANIME_AUDIO"
-        r="$("$_JQ" -r '.[] |= select(.audio == "'"$_ANIME_AUDIO"'") | select(.[] != null)' <<< "$d")"
-        if [[ -n "${r:-}" ]]; then
-            d="$r"
-        else
+        r="$(grep 'data-audio="'"$_ANIME_AUDIO"'"' <<< "$l")"
+        if [[ -z "${r:-}" ]]; then
             print_warn "Selected audio language is not available, fallback to default."
         fi
     fi
@@ -245,26 +256,24 @@ get_episode_link() {
     #     echo "$r"
     # fi
         print_info "Select video resolution: $_ANIME_RESOLUTION"
-        r="$("$_JQ" -r 'to_entries | .[] |= select(.key == "'"$_ANIME_RESOLUTION"'") | from_entries | select(.[] != null)' <<< "$d")"
-        if [[ -n "${r:-}" ]]; then
-            d="$r"
-        else
-            print_warn "Selected video resolution not available, fallback to default"
+        r="$(grep 'data-resolution="'"$_ANIME_RESOLUTION"'"' <<< "${r:-$l}")"
+        if [[ -z "${r:-}" ]]; then
+            print_warn "Selected video resolution is not available, fallback to default"
         fi
     fi
 
-    
     if [[ -z "${r:-}" ]]; then
-        grep url <<< "$o" | grep kwik | awk -F '"' '{print $2}'
+        grep kwik <<< "$l" | tail -1 | grep kwik | awk -F '"' '{print $1}'
     else
-        awk -F '" ' '{print $1}' <<< "$r" | head -1
+        awk -F '" ' '{print $1}' <<< "$r" | tail -1
     fi
+
 }
 
 get_playlist_link() {
     # $1: episode link
     local s l
-    s="$("$_CURL" --compressed -sS -H "Referer: $_REFERER_URL" "$1" \
+    s="$("$_CURL" --compressed -sS -H "Referer: $_REFERER_URL" "cookie: $_COOKIE" "$1" \
         | grep "<script>eval(" \
         | awk -F 'script>' '{print $2}'\
         | sed -E 's/document/process/g' \
@@ -365,49 +374,6 @@ download_episodes() {
     [[ ${#uniqel[@]} == 0 ]] && print_error "Wrong episode number!"
 
     for e in "${uniqel[@]}"; do
-        # # for showning anime name in information
-        # print_info "Selected Anime: $_ANIME_NAME"
-
-        # # for showning anime episodes in information
-        # total="$("$_JQ" -r '.total' "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE" | sort -nu)"
-        
-        # # if anime api did not have total episode variable then
-        # if [[ "$total" == "null" ]]; then
-        #     start="$(head -1 <<< "$eps")"
-        #     start="$(($start-1))"
-        #     end="$(tail -1 <<< "$eps")"
-        #     total="$(($end-$start))"
-        #     print_info "Total Episodes: $total"
-        # else
-        #     # if anime api have total episode variable then
-        #     print_info "Total Episodes: $total"
-        # fi
-
-        # # for showning selected anime episodes in information
-        # # if choose to download all episodes
-        # if [[ "$only" == *"*"* ]]; then
-        #     episodes="$("$_JQ" -r '.data[].episode' "$_SCRIPT_PATH/$_ANIME_NAME/$_SOURCE_FILE" | sort -nu)"
-        #     start="$(head -1 <<< "$eps")"
-        #     end="$(tail -1 <<< "$eps")"
-
-        #     # if selected anime have only one episode
-        #     if [[ "$start" == "$end" ]]; then
-        #         print_info "Selected Episode To Download Is $end"
-            
-        #     # if selected anime have more than one episodes
-        #     else
-        #         print_info "Selected Episodes To Download From $start To $end"
-        #     fi
-        # # if choose to download range of episodes
-        # elif [[ "$only" == *"-"* ]]; then
-        #     start=$(awk -F '-' '{print $1}' <<< "$only")
-        #     last=$(awk -F '-' '{print $2}' <<< "$only")
-        #     print_info "Selected Episodes To Download From $start To $last"
-        
-        # # if choose to download only one episode
-        # else
-        #     print_info "Selected Episode To Download Is $only"
-        # fi
         print_info "--------------------------"
         download_episode "$e"
     done
@@ -428,7 +394,7 @@ download_file() {
     # $1: URL link
     # $2: output file
     local s
-    s=$("$_CURL" -s -H "Referer: $_REFERER_URL" -C - "$1" -L -g -o "$2" \
+    s=$("$_CURL" -s -H "Referer: $_REFERER_URL" -H "cookie: $_COOKIE" -C - "$1" -L -g -o "$2" \
         --connect-timeout 5 \
         --compressed \
         || echo "$?")
@@ -550,6 +516,7 @@ get_slug_from_name() {
 main() {
     set_args "$@"
     set_var
+    set_cookie
 
     if [[ -n "${_INPUT_ANIME_NAME:-}" ]]; then
         _ANIME_NAME=$("$_FZF" -1 <<< "$(search_anime_by_name "$_INPUT_ANIME_NAME")")
